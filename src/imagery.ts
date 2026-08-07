@@ -48,6 +48,42 @@ export function wmX(lonDeg: number): number {
 
 interface TileRect { u0: number; u1: number; v0: number; v1: number; bitmap: ImageBitmap; }
 
+// --- global basemap-tile cache: one fetch per unique XYZ tile, shared across all terrain tiles ---
+const bitmapCache = new Map<string, Promise<ImageBitmap>>();
+let inflightFetches = 0;
+const MAX_GLOBAL_FETCHES = 20;
+const fetchWaiters: (() => void)[] = [];
+
+async function withFetchPermit<T>(fn: () => Promise<T>): Promise<T> {
+  if (inflightFetches >= MAX_GLOBAL_FETCHES) {
+    await new Promise<void>((res) => fetchWaiters.push(res));
+  }
+  inflightFetches++;
+  try {
+    return await fn();
+  } finally {
+    inflightFetches--;
+    const next = fetchWaiters.shift();
+    if (next) next();
+  }
+}
+
+function cachedBitmap(url: string): Promise<ImageBitmap> {
+  let p = bitmapCache.get(url);
+  if (!p) {
+    p = withFetchPermit(async () => {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error("basemap " + resp.status);
+      return createImageBitmap(await resp.blob());
+    }).catch((e) => {
+      bitmapCache.delete(url); // allow retry later
+      throw e;
+    });
+    bitmapCache.set(url, p);
+  }
+  return p;
+}
+
 /**
  * Build a canvas texture covering a terrain tile's [west,east]x[south,north] bounds.
  * Fetches overlapping WebMercator tiles at zoom `zi` and mosaics them in mercator space.
@@ -80,16 +116,17 @@ export async function buildImageryCanvas(
 
   const rects: TileRect[] = [];
   try {
-    await Promise.all(Array.from({ length: (yS - yN + 1) }, (_, iy) => yN + iy).map(async (y) => {
+    const tasks: Promise<void>[] = [];
+    for (let y = yN; y <= yS; y++) {
       for (let x = x0; x <= x1; x++) {
         const url = source.url(ziClamped, x, y);
-        const resp = await fetch(url);
-        if (!resp.ok) continue;
-        const bmp = await createImageBitmap(await resp.blob());
-        const duu = 1 / n;
-        rects.push({ u0: x * duu, u1: (x + 1) * duu, v0: y * duu, v1: (y + 1) * duu, bitmap: bmp });
+        tasks.push(cachedBitmap(url).then((bmp) => {
+          const duu = 1 / n;
+          rects.push({ u0: x * duu, u1: (x + 1) * duu, v0: y * duu, v1: (y + 1) * duu, bitmap: bmp });
+        }).catch(() => { /* missing tile: leave blank */ }));
       }
-    }));
+    }
+    await Promise.all(tasks);
   } catch { /* network errors: leave the canvas as-is */ }
 
   for (const r of rects) {
