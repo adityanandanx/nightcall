@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nightcall — single-tile prototype</title>
+    <style>
+      html, body, #root { margin: 0; height: 100%; background: #07090c; color: #e8e8e8;
+        font-family: system-ui, sans-serif; }
+      #root { position: relative; }
+      .panel { position: absolute; top: 14px; left: 14px; z-index: 10; background: rgba(14,18,24,.85);
+        backdrop-filter: blur(8px); border: 1px solid #ffffff22; border-radius: 10px; padding: 14px 16px;
+        font-size: 12px; max-width: 300px; line-height: 1.5; }
+      .panel h1 { font-size: 15px; margin: 0 0 6px; }
+      .panel .sub { opacity: .7; margin-bottom: 8px; }
+      .row { display:flex; align-items:center; justify-content: space-between; padding: 3px 0; cursor:pointer; }
+      .row label { opacity:.85 }
+      .row .val { color:#7fd0ff; font-family: ui-monospace, monospace; }
+      .row input { margin:0 }
+      .states { margin-top: 8px; background:#ffffff08; border-radius:8px; padding:8px 10px; }
+      .states b { color:#ffd479 }
+      button { margin-top:10px; background:#1d2833; color:#cfe8ff; border:1px solid #ffffff26;
+        border-radius:8px; padding:7px 12px; cursor:pointer; font-size:12px }
+      button:hover { background:#27384a }
+      a { color:#7fd0ff }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
