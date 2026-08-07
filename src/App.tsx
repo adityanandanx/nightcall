@@ -1,67 +1,59 @@
 import { useEffect, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { TerrainTileMesh } from "./TerrainTile";
-import { fetchTerrainTile, geodeticToECEF, WGS84_A, DecodedTile } from "./terrain";
+import { TerrainLOD } from "./LOD";
+import { geodeticToECEF } from "./terrain";
 
-// Start looking at Mt Fuji (lon 138.7274, lat 35.36) from space.
+// Start looking at Mt Fuji (lon 138.7274, lat 35.36) from space, zooming in over the run.
 const HOME_LON = 138.7274;
 const HOME_LAT = 35.36;
-const CAM_DISTANCE = 5_000_000; // ~0.8 Earth radii
-// Tile containing Mt Fuji at z=2: x=7 (lon 135..180), y=2 (lat 0..45)
-const TILE = { z: 2, x: 7, y: 2 };
 
 export default function App() {
-  const [tile, setTile] = useState<DecodedTile | null>(null);
-  const [state, setState] = useState<"loading" | "ok" | "error">("loading");
-  const [error, setError] = useState("");
   const [showEllipsoid, setShowEllipsoid] = useState(true);
-  const [key, setKey] = useState(0); // remount scene on reload
-
-  const load = async () => {
-    setState("loading"); setError(""); setTile(null);
-    try {
-      const t = await fetchTerrainTile(TILE.z, TILE.x, TILE.y);
-      setTile(t); setState("ok");
-    } catch (e: any) {
-      setState("error"); setError(String(e?.message || e));
-    }
-  };
-
-  useEffect(() => { load(); }, []);
+  const [skirt, setSkirt] = useState(true);
+  const [stats, setStats] = useState({ selected: 0, settled: 0, bytes: 0 });
+  const [camDist, setCamDist] = useState<number>(15_000_000);
 
   return (
     <div style={{ position: "relative", height: "100%" }}>
       <Canvas
-        key={key}
-        camera={{ position: geodeticToECEF(HOME_LON, HOME_LAT, CAM_DISTANCE), far: 1e9, near: 1 }}
+        camera={{ position: geodeticToECEF(HOME_LON, HOME_LAT, 300_000), far: 3e8, near: 1 }}
         gl={{ logarithmicDepthBuffer: true }}
         dpr={[1, 2]}
+        onCreated={({ camera }) => setCamDist(camera.position.length())}
       >
         <ambientLight intensity={0.5} />
         <directionalLight position={[1e7, 2e7, 3e7]} intensity={1.6} />
-        {tile && <TerrainTileMesh tile={tile} z={TILE.z} x={TILE.x} y={TILE.y} />}
+
         {showEllipsoid && (
           <mesh>
-            <sphereGeometry args={[WGS84_A, 48, 24]} />
-            <meshBasicMaterial color="#0d1420" wireframe transparent opacity={0.35} />
+            <sphereGeometry args={[6378137, 48, 24]} />
+            <meshBasicMaterial color="#0d1420" wireframe transparent opacity={0.3} />
           </mesh>
         )}
-        <OrbitControls enableDamping />
+
+        <TerrainLOD
+          skirtHeight={skirt ? 300 : 0}
+          settings={{ maxLevel: 12, maxSSE: 12 }}
+          onStats={(s) => setStats(s)}
+        />
+        <OrbitControls enableDamping dampingFactor={0.15} />
       </Canvas>
 
       <div className="panel">
-        <h1>nightcall — single-tile prototype</h1>
-        <div className="sub">One quantized-mesh tile on the WGS84 ellipsoid (ticket #5)</div>
-        <div className="row"><label>Tile</label><span className="val">{TILE.z}/{TILE.x}/{TILE.y}</span></div>
-        <div className="row"><label>Vertices</label><span className="val">{tile?.vertexCount ?? "—"}</span></div>
-        <div className="row"><label>Triangles</label><span className="val">{tile?.triangleCount ?? "—"}</span></div>
-        <div className="row"><label>Status</label><span className="val">{state}</span></div>
+        <h1>nightcall — zoom-driven LOD (ticket #6)</h1>
+        <div className="sub">SSE quadtree over TMS 4326 · terrain.reearth.land</div>
+        <div className="row"><label>Selected tiles</label><span className="val">{stats.selected}</span></div>
+        <div className="row"><label>Settled (decoded)</label><span className="val">{stats.settled}</span></div>
+        <div className="row"><label>Cache bytes</label><span className="val">{(stats.bytes / 1e6).toFixed(1)} MB</span></div>
+        <div className="row"><label>Camera alt</label><span className="val">{(camDist / 1e6).toFixed(1)} Mm</span></div>
         <label className="row"><span>Ellipsoid wireframe</span>
           <input type="checkbox" checked={showEllipsoid} onChange={(e) => setShowEllipsoid(e.target.checked)} />
         </label>
-        {state === "error" && <div style={{ color: "#ff7d7d" }}>{error}</div>}
-        <button onClick={load}>Reload tile</button>
+        <label className="row"><span>Skirts (crack hide)</span>
+          <input type="checkbox" checked={skirt} onChange={(e) => setSkirt(e.target.checked)} />
+        </label>
+        <div className="hint">Orbit-zoom: scroll to refine terrain — wait a moment for tiles to stream.</div>
       </div>
     </div>
   );
