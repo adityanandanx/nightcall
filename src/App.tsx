@@ -1,26 +1,44 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { OrbitControls, OrbitControls as OrbitControlsImpl } from "@react-three/drei";
+import type { OrbitControls as OC } from "three-stdlib";
 import { TerrainLOD } from "./LOD";
 import { geodeticToECEF } from "./terrain";
 
-// Start looking at Mt Fuji (lon 138.7274, lat 35.36) from space, zooming in over the run.
+// Start looking at Mt Fuji (lon 138.7274, lat 35.36).
 const HOME_LON = 138.7274;
 const HOME_LAT = 35.36;
+// Orbit target: a point ~4 km above the ellipsoid at the home location — above Fuji's
+// 3.78 km summit — so the camera orbits around the mountain, never through the planet core.
+const HOME_TARGET: [number, number, number] = geodeticToECEF(HOME_LON, HOME_LAT, 4000);
+const EARTH_R = 6378137;
+// radius of the ellipsoid surface directly below the home target (accounts for flattening),
+// so the altitude readout is true height above local ground, not distance from the equator radius.
+const HOME_SURF: [number, number, number] = geodeticToECEF(HOME_LON, HOME_LAT, 0);
+const ELLIPSE_R_AT_HOME = Math.hypot(HOME_SURF[0], HOME_SURF[1], HOME_SURF[2]);
 
 export default function App() {
   const [showEllipsoid, setShowEllipsoid] = useState(true);
   const [skirt, setSkirt] = useState(true);
   const [stats, setStats] = useState({ selected: 0, settled: 0, bytes: 0 });
-  const [camDist, setCamDist] = useState<number>(15_000_000);
+  const [camDist, setCamDist] = useState<number>(300_000);
+  const controlsRef = useRef<OC>(null);
+  useEffect(() => {
+    (window as any).__getCam = () => {
+      const c = controlsRef.current;
+      if (!c) return null;
+      const p = c.object.position;
+      return { x: p.x, y: p.y, z: p.z, r: Math.hypot(p.x, p.y, p.z), alt: Math.hypot(p.x, p.y, p.z) - EARTH_R,
+               minD: c.minDistance, maxD: c.maxDistance, target: Array.from((c as any).target) };
+    };
+  }, []);
 
   return (
     <div style={{ position: "relative", height: "100%" }}>
       <Canvas
-        camera={{ position: geodeticToECEF(HOME_LON, HOME_LAT, 300_000), far: 3e8, near: 1 }}
+        camera={{ position: geodeticToECEF(HOME_LON, HOME_LAT, 2_500_000), far: 3e8, near: 1 }}
         gl={{ logarithmicDepthBuffer: true }}
         dpr={[1, 2]}
-        onCreated={({ camera }) => setCamDist(camera.position.length())}
       >
         <ambientLight intensity={0.5} />
         <directionalLight position={[1e7, 2e7, 3e7]} intensity={1.6} />
@@ -37,7 +55,19 @@ export default function App() {
           settings={{ maxLevel: 12, maxSSE: 12 }}
           onStats={(s) => setStats(s)}
         />
-        <OrbitControls enableDamping dampingFactor={0.15} />
+        <OrbitControls
+          ref={controlsRef}
+          target={HOME_TARGET}
+          onEnd={() => setCamDist(controlsRef.current?.object.position.length() ?? 0)}
+          onStart={() => setCamDist(controlsRef.current?.object.position.length() ?? 0)}
+          minDistance={1000}     // camera stays >= ~3 km above the target point -> no clipping into Fuji
+          maxDistance={1e8}      // far enough to see the whole globe
+          enablePan={false}      // orbit, don't drag the target off the globe
+          maxPolarAngle={Math.PI / 2}  // never flip under the globe
+          enableDamping
+          dampingFactor={0.15}
+          zoomSpeed={1.2}        // finer wheel control near the surface
+        />
       </Canvas>
 
       <div className="panel">
@@ -46,7 +76,7 @@ export default function App() {
         <div className="row"><label>Selected tiles</label><span className="val">{stats.selected}</span></div>
         <div className="row"><label>Settled (decoded)</label><span className="val">{stats.settled}</span></div>
         <div className="row"><label>Cache bytes</label><span className="val">{(stats.bytes / 1e6).toFixed(1)} MB</span></div>
-        <div className="row"><label>Camera alt</label><span className="val">{(camDist / 1e6).toFixed(1)} Mm</span></div>
+        <div className="row"><label>Camera alt</label><span className="val">{((camDist - ELLIPSE_R_AT_HOME) / 1000).toFixed(1)} km</span></div>
         <label className="row"><span>Ellipsoid wireframe</span>
           <input type="checkbox" checked={showEllipsoid} onChange={(e) => setShowEllipsoid(e.target.checked)} />
         </label>
